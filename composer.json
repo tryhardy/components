@@ -2,7 +2,7 @@
   "name": "tryhardy/iblock.items",
   "description": "Облегченный компонент списка элементов",
   "homepage": "https://github.com/tryhardy/iblock.items",
-  "type": "bitrix-module",
+  "type": "bitrix-d7-component",
   "minimum-stability": "dev",
   "authors": [
     {
