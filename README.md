@@ -1,4 +1,6 @@
 # Простой компонент списка
+Простой компонент списка для Bitrix  
+
 Использует для работы класс [\Tryhardy\BitrixFilter\ElementsFilter](https://github.com/tryhardy/bitrix-filter)  
 
 # Composer
