@@ -1,0 +1,31 @@
+{
+  "name": "tryhardy/iblock.items",
+  "description": "Облегченный компонент списка элементов",
+  "homepage": "https://github.com/tryhardy/iblock.items",
+  "type": "bitrix-module",
+  "minimum-stability": "dev",
+  "authors": [
+    {
+      "name": "Наталия Гаращенко",
+      "email": "n.garashchenko@uplab.ru"
+    }
+  ],
+  "license": "MIT",
+  "repositories": [
+    {
+      "type": "git",
+      "url": "https://github.com/tryhardy/bitrix-filter.git"
+    }
+  ],
+  "require": {
+    "php": ">=7.4",
+    "ext-mbstring": "*",
+    "tryhardy/bitrix-filter": "dev-master",
+    "composer/installers": "~1"
+  },
+  "config": {
+    "allow-plugins": {
+      "composer/installers": true
+    }
+  }
+}
