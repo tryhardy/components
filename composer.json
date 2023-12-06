@@ -1,5 +1,5 @@
 {
-  "name": "tryhardy/iblock.items",
+  "name": "iblock.items" ,
   "description": "Облегченный компонент списка элементов",
   "homepage": "https://github.com/tryhardy/iblock.items",
   "type": "bitrix-d7-component",
