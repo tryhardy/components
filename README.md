@@ -13,16 +13,12 @@
   "repositories": [
     {
       "type": "git",
-      "url": "https://github.com/tryhardy/bitrix-filter.git"
-    },
-    {
-      "type": "git",
       "url": "https://github.com/tryhardy/iblock.items"
     }
   ],
   "extra": {
     "installer-paths": {
-      "components/{$name}/": ["type:bitrix-component"]
+      "components/{$name}/": ["type:bitrix-d7-component"]
     }
   }
 }
