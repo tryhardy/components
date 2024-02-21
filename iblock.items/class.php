@@ -4,6 +4,7 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
 }
 
+
 use Bitrix\Iblock\Component\Tools;
 use Bitrix\Iblock\ElementTable;
 use Bitrix\Main;
@@ -16,7 +17,7 @@ use CBitrixComponent;
 use CDBResult;
 use CIBlock;
 use CPageOption;
-use Nlmkmed\Local\Common\Filters\ElementsFilter;
+use Tryhardy\BitrixFilter\ElementsFilter;
 
 class SampleListIblockItemsComponent extends \CBitrixComponent
 {
@@ -82,7 +83,7 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 	/**
 	 * @var null ElementsFilter
 	 */
-    protected $filter = null;                           //внешний фильтр
+    protected ?ElementsFilter $filter = null;                           //внешний фильтр
     protected array $arSort = [];                           //внешняя сортировка
 	protected bool $useRandomSort = false;                  //Если в SORT передается параметр RAND
 
