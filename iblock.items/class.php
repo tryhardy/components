@@ -4,7 +4,6 @@ if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
 }
 
-
 use Bitrix\Iblock\Component\Tools;
 use Bitrix\Iblock\ElementTable;
 use Bitrix\Main;
