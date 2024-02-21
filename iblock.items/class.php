@@ -1,37 +1,26 @@
 <?php
 
-namespace Tryhardy\Components;
-
 if (!defined('B_PROLOG_INCLUDED') || B_PROLOG_INCLUDED !== true) {
     die();
 }
 
-// composer for out public
-if (file_exists($_SERVER["DOCUMENT_ROOT"]."/../vendor/autoload.php")) {
-	require_once($_SERVER["DOCUMENT_ROOT"] . "/../vendor/autoload.php");
-}
-
-// composer for local
-if (file_exists($_SERVER["DOCUMENT_ROOT"]."/local/vendor/autoload.php")) {
-	require_once($_SERVER["DOCUMENT_ROOT"] . "/local/vendor/autoload.php");
-}
-
+use Bitrix\Iblock\Component\Tools;
+use Bitrix\Iblock\ElementTable;
 use Bitrix\Main;
 use Bitrix\Main\ArgumentException;
 use Bitrix\Main\Localization\Loc;
-use Bitrix\Main\ObjectNotFoundException;
 use Bitrix\Iblock;
+use Bitrix\Main\ORM\Query\Result;
 use Bitrix\Main\UI\PageNavigation;
 use CBitrixComponent;
 use CDBResult;
 use CIBlock;
 use CPageOption;
-use Exception;
-use Tryhardy\BitrixFilter\ElementsFilter;
-use Uplab\Core\IblockHelper;
+use Nlmkmed\Local\Common\Filters\ElementsFilter;
 
-class TryhardyIblockItemsComponent extends CBitrixComponent
+class SampleListIblockItemsComponent extends \CBitrixComponent
 {
+	protected int $iblockId;
     //кешируемые ключи arResult
     protected array $resultCacheKeys = [
 	    "ID",
@@ -42,7 +31,10 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 	    "SECTION",
 	    "NAV_CHAIN",
 	    "ITEMS",
+	    "NAV_DATA"
     ];
+
+	protected array $fileIdsArray = [];
 
 	//массив параметров для select по умолчанию
     private array $defaultSelect = [
@@ -50,36 +42,9 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 		"IBLOCK_ID",
 		"NAME",
 	    "CODE",
-	    "SORT",
-	    "TIMESTAMP_X",
-	    "DATE_CREATE",
 	    "IBLOCK_SECTION_ID",
-	    "ACTIVE",
-	    "ACTIVE_FROM",
-	    "ACTIVE_TO",
 	    "PREVIEW_TEXT",
-	    "PREVIEW_TEXT_TYPE",
-	    "DETAIL_TEXT",
-	    "DETAIL_TEXT_TYPE",
 	    "PREVIEW_PICTURE",
-	    "DETAIL_PICTURE",
-
-	    "IBLOCK.ID",
-	    "IBLOCK.NAME",
-	    "IBLOCK.CODE",
-	    "IBLOCK.LIST_PAGE_URL",
-	    "IBLOCK.SECTION_PAGE_URL",
-	    "IBLOCK.DETAIL_PAGE_URL",
-
-	    "IBLOCK_SECTION.ID",
-	    "IBLOCK_SECTION.ACTIVE",
-	    "IBLOCK_SECTION.GLOBAL_ACTIVE",
-	    "IBLOCK_SECTION.NAME",
-	    "IBLOCK_SECTION.CODE",
-	    "IBLOCK_SECTION.PICTURE",
-	    "IBLOCK_SECTION.DEPTH_LEVEL",
-	    "IBLOCK_SECTION.DESCRIPTION",
-	    "IBLOCK_SECTION.IBLOCK_SECTION_ID",
     ];
 
     /**
@@ -90,7 +55,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
     protected array $cacheAddon = [];
 
     //модули, которые необходимо подключить для корректной работы компонента
-    protected array $dependModules = ["iblock", "uplab.core"];
+    protected array $dependModules = ["iblock"];
 
     //параметры, которые необходимо проверить
     protected array $requiredParams = [
@@ -104,7 +69,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
      * парамтеры постраничной навигации
      * @var array
      */
-	protected int $maxLimit = 100;
+	protected int $maxLimit = 150;
 	protected int $limit = 20;
 	protected string $navigationName = "pagination";        //название объекта пагинации
 	protected bool $showNav = false;                        // выводить ли массив с пагинацией
@@ -126,7 +91,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 	protected string $defaultDateFormat = 'd.m.Y';          //формат даты по умолчанию
 
     /**
-     * подключаем языковые файлы
+     * Подключаем языковые файлы
      */
     public function onIncludeComponentLang()
     {
@@ -140,139 +105,164 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
      * @return array
      * @throws Exception
      */
-    public function onPrepareComponentParams(array $params = []): array
+    public function onPrepareComponentParams($params): array
     {
+		global $USER;
+
 		//под админом в режиме правки?
-        $bDesignMode = $GLOBALS["APPLICATION"]->GetShowIncludeAreas() && is_object($GLOBALS["USER"]) && ($GLOBALS["USER"]->IsAdmin());
+        $bDesignMode = $GLOBALS["APPLICATION"]->GetShowIncludeAreas() && is_object($USER) && ($USER->IsAdmin());
 
-		//Устанавливаем срок жизни кэша, если не указан
-        if (!isset($params["CACHE_TIME"]) && !$bDesignMode) {
-            if (defined("CACHE_TIME")) {
-                $params["CACHE_TIME"] = CACHE_TIME;
-            }
-			else {
-                $params["CACHE_TIME"] = 0;
-            }
-        }
+	    //Отключаем кэш в режиме правки
+	    if ($bDesignMode) {
+			$params["CACHE_TIME"] = 0;
+		}
 
-		//Устанавливаем количество элементов на странице (минимум 1, максимум 100)
+		//Устанавливаем количество элементов на странице (минимум 1, максимум 150)
         $params["COUNT_LIMIT"] = (int) $params["COUNT_LIMIT"];
         if ($params["COUNT_LIMIT"] <= 0 || $params["COUNT_LIMIT"] > $this->maxLimit) {
             $params["COUNT_LIMIT"] = $this->limit;
         }
 
 		//Пробрасываем исключение, если в параметры компонента передается неправильный объект фильтра
-        if (
-			isset($params["FILTER"]) &&
-			!empty($params["FILTER"]) &&
-			!$params["FILTER"] instanceof ElementsFilter
-        ) {
+        if (isset($params["FILTER"]) && !empty($params["FILTER"]) && !($params["FILTER"] instanceof ElementsFilter)) {
 	        throw new Exception("FILTER object not found");
         }
-		else {
+
+		//Если фильтр не передан, заводим просто пустой экземпляр класса ElementsFilter
+		if (!$params["FILTER"]) {
 			$params["FILTER"] = ElementsFilter::getInstance();
 		}
 
+		//Если в параметрах компонента переданы дополнительные поля для выборки
         if (isset($params["ADDITIONAL_SELECT"]) && !empty($params["ADDITIONAL_SELECT"])) {
             foreach ($params["ADDITIONAL_SELECT"] as $selectItem) {
 	            $params["ADDITIONAL_SELECT"][] = trim($selectItem);
             }
         }
 
+		//Основые параметры массива $arParams, необходимые для работы раздела
         $result = [
-	        "DESIGN_MODE" => $bDesignMode,
-	        "IBLOCK_ID" => intval($params["IBLOCK_ID"]),
-	        "SECTION_ID" => intval($params["SECTION_ID"]),
-	        "PAGER_TITLE" => trim($params["PAGER_TITLE"]),
-	        "DETAIL_URL" => trim($params["DETAIL_URL"]),
-	        "SECTION_URL" => trim($params["SECTION_URL"]),
-	        "LIST_URL" => trim($params["LIST_URL"]),
-	        "PAGER_TEMPLATE" => trim($params["PAGER_TEMPLATE"]),
-	        "PAGER_SHOW_ALWAYS" => ($params["PAGER_SHOW_ALWAYS"] == "Y" ? "Y" : "N"),
-	        "SHOW_NAV" => ($params["SHOW_NAV"] == "N" ? "N" : "Y"),
-	        "SET_META" => ($params["SET_META"] == "Y" ? "Y" : "N"),
-	        "SET_CHAIN" => ($params["SET_CHAIN"] == "Y" ? "Y" : "N"),
-	        "COUNT_LIMIT" => $params["COUNT_LIMIT"],
-	        "CACHE_GROUPS" => ($params["CACHE_GROUPS"] == "Y" ? "Y" : "N"),
-	        "RETURN_ITEMS" => ($params["RETURN_ITEMS"] == "Y" ? "Y" : "N"),
-	        "SET_STATUS_404" => ($params["SET_STATUS_404"] == "Y" ? "Y" : "N"),
-	        "SECTIONS_SELECT" => array_unique(
-		        array_merge(
-			        $params["SECTIONS_SELECT"] ?? [],
-			        [
-				        "DESCRIPTION",
-				        "SECTION_PAGE_URL",
-			        ]
-		        )
-	        ),
+			"TITLE" => $params["TITLE"],
+	        "DESCRIPTION" => $params["DESCRIPTION"],
+
+	        "DESIGN_MODE" => $bDesignMode, //Включен режим правки
+	        "IBLOCK_ID" => intval($params["IBLOCK_ID"]), //ID иифноблока для фильтрации эл-тов
+	        "SECTION_ID" => intval($params["SECTION_ID"]), //ID раздела для фильтрации эл-тов
+	        "INCLUDE_SUBSECTIONS" => ($params["INCLUDE_SUBSECTIONS"] == "Y" ? "Y" : "N"), //Выводить элементы подразделов
+	        "SECTION_GLOBAL_ACTIVE" => ($params["SECTION_GLOBAL_ACTIVE"] == "Y" ? "Y" : "N"), //Учитывать глобальную активность разделов
+	        "COUNT_LIMIT" => $params["COUNT_LIMIT"], //Количество элементов на странице
+	        "SORT" => $params["SORT"] && is_array($params['SORT']) ? $params["SORT"] : ['ID' => 'DESC'], //Сортировка
+	        "SHOW_PROPERTIES" => $params["SHOW_PROPERTIES"] ? $params["SHOW_PROPERTIES"] : [], //Выводить свойства в списке
+	        "SHOW_ACTIVE" => ($params["SHOW_ACTIVE"] == "Y" ? "Y" : "N"), //Выводить только активные
+	        "SET_DETAIL_URL" => ($params["SET_DETAIL_URL"] == "N" ? "N" : "Y"), //Формировать URL-адрес
+
+	        "DATE_FORMAT" => $params["DATE_FORMAT"] ?: $this->defaultDateFormat, //Формат даты для вывода,
+	        "FORMAT_DATE" => ($params["FORMAT_DATE"] == "Y" ? "Y" : "N"), //Форматировать дату
+
+	        "DETAIL_URL" => trim($params["DETAIL_URL"]), //Шаблон детального URL
+	        "SECTION_URL" => trim($params["SECTION_URL"]), //Шаблон URL раздела
+	        "LIST_URL" => trim($params["LIST_URL"]),  //Шаблон URL списка
+
+	        "SET_META" => ($params["SET_META"] == "Y" ? "Y" : "N"), //Устанавливать мета-теги
+
+	        "SET_CHAIN" => ($params["SET_CHAIN"] == "Y" ? "Y" : "N"), //Устанавливать цепочку навигации
+
+	        "CACHE_GROUPS" => ($params["CACHE_GROUPS"] == "Y" ? "Y" : "N"), //Учитывать права доступа
+	        "CACHE_TIME" => $params["CACHE_TIME"], //Время кэширования
+	        "CACHE_TYPE" => $params["CACHE_TYPE"], //Тип кэширования
+	        "CACHE_FILTER" => ($params["CACHE_FILTER"] == "Y" ? "Y" : "N"), //Учитывать фильтр
+
+	        "RETURN_ITEMS" => ($params["RETURN_ITEMS"] == "Y" ? "Y" : "N"), // В качестве результата выполнения компонента возвращать $arResult
+
+	        "FILE_404" => trim($params["FILE_404"]), //Файл с сообщением, если не найдены элементы
+	        "SHOW_404" => ($params["SHOW_404"] == "Y" ? "Y" : "N"), //Выводить сообщение, если не найдены элементы
+	        "SET_STATUS_404" => ($params["SET_STATUS_404"] == "Y" ? "Y" : "N"), //Устанавливать статус 404, если не найдены элементы
+
+	        //Блок пагинации
+	        "SHOW_NAV" => ($params["SHOW_NAV"] == "N" ? "N" : "Y"), //Выводить пагинацию
+	        "PAGER_SHOW_ALWAYS" => ($params["PAGER_SHOW_ALWAYS"] == "Y" ? "Y" : "N"), //Выводить всегда
+	        "PAGER_TITLE" => trim($params["PAGER_TITLE"]), //Заголовок блока пагинации
+	        "PAGER_TEMPLATE" => trim($params["PAGER_TEMPLATE"]), //Шаблон пагинации
+	        "NAVIGATION_NAME" => $params["NAVIGATION_NAME"] ?: ($this->getTemplateName() ?: 'nav') //Наименование объекта пагинации
         ];
 
         return array_merge($params, $result);
     }
 
+	/**
+	 * подготавливает классовые свойства
+	 * @param array $params
+	 * @return void
+	 */
 	protected function onPrepareClassProperties(array $params = [])
 	{
-		if ($params["CACHE_TIME"] > 0) {
-			$this->fromCache = true;
-		}
+		$this->iblockId = $params["IBLOCK_ID"];
+		$this->fromCache = $params["CACHE_TIME"] > 0;
+		$this->filter = $this->onPrepareFilter();
 
-		$this->onPrepareFilter($params);
-		$this->onPrepareSort($params);
+		$this->arSort = $params["SORT"];
+		if (in_array("RAND", array_keys($this->arSort))) $this->useRandomSort = true;
 
 		$this->showNav = $this->arParams["SHOW_NAV"] === "Y";
-		$this->limit = $this->arParams["COUNT_LIMIT"] > 0 ? $this->arParams["COUNT_LIMIT"] : $this->limit;
-		$this->navigationName = $this->arParams["NAVIGATION_NAME"] ?: ($this->getTemplateName() ?: 'pagination');
+		$this->limit = $this->arParams["COUNT_LIMIT"];
+		$this->navigationName = $this->arParams["NAVIGATION_NAME"];
 
 	}
 
-	protected function onPrepareFilter(array $params = [])
+	/**
+	 * подготавливает объект фильтра для выборки элементов
+	 * @return ElementsFilter
+	 */
+	protected function onPrepareFilter() : ElementsFilter
 	{
-		$this->filter = $params["FILTER"];
+		$params = $this->arParams;
+		$filter = $params["FILTER"];
 
-		if (!$this->filter->get("IBLOCK_ID")) {
-			$this->filter->add("IBLOCK_ID", $params["IBLOCK_ID"]);
+		if (!$filter->get("IBLOCK_ID") || $filter->get("IBLOCK_ID") != $params["IBLOCK_ID"]) {
+			$filter->add("IBLOCK_ID", $params["IBLOCK_ID"]);
 		}
 
 		if ($params["SECTION_ID"] > 0) {
 			$includeSubsections = !($params["INCLUDE_SUBSECTIONS"] == "N");
-			$this->filter = $this->filter->addSections("IBLOCK_SECTION_ID", (int) $params["SECTION_ID"], $includeSubsections);
+			$filter = $filter->addSections("IBLOCK_SECTION_ID", (int) $params["SECTION_ID"], $includeSubsections);
 		}
 
 		if ($params["SECTION_GLOBAL_ACTIVE"] === "Y") {
-			$this->filter = $this->filter->add("IBLOCK_SECTION.GLOBAL_ACTIVE", $params["SECTION_GLOBAL_ACTIVE"]);
+			$filter = $filter->add("IBLOCK_SECTION.GLOBAL_ACTIVE", $params["SECTION_GLOBAL_ACTIVE"]);
 		}
-	}
 
-	protected function onPrepareSort(array $params = [])
-	{
-		if (isset($params["SORT"]) && !empty($params["SORT"]) && is_array($params["SORT"])) {
-			$this->arSort = $params["SORT"];
-			if (in_array("RAND", array_keys($this->arSort))) $this->useRandomSort = true;
+		if ($this->arParams["SHOW_ACTIVE"] === "Y") {
+			$filter = $filter->add("ACTIVE", "Y");
 		}
+
+		return $filter;
 	}
 
     public function executeComponent()
     {
         try {
 			$params = $this->arParams;
+			//Проверяем, все ли обязательные параметры заполнены
 	        $this->checkParams($params);
-			$this->onPrepareClassProperties($params);
+			//Проверяем, все ли модули подключены
 	        $this->checkModules();
-	        $this->initNavData();
+			//Устанавливаем свойства класса, необходимые для работы методов ниже
+			$this->onPrepareClassProperties($params);
 
             if (!$this->readDataFromCache()) {
 				$this->getResult();
 				$result = $this->arResult;
-
+				echo "<pre>";
+				print_r($result);
+				echo "</pre>";
                 if (defined("BX_COMP_MANAGED_CACHE")) {
                     global $CACHE_MANAGER;
-                    $CACHE_MANAGER->RegisterTag("iblock_id_" . $params["IBLOCK_ID"]);
+                    $CACHE_MANAGER->RegisterTag("iblock_id_" . $this->iblockId);
                 }
 
                 if (empty($result["ITEMS"]) && $params["SET_STATUS_404"] === "Y") {
                     $this->abortResultCache();
-
-                    \Bitrix\Iblock\Component\Tools::process404(
+                    Tools::process404(
                         "",
                         ($this->arParams["SET_STATUS_404"] === "Y"),
                         ($this->arParams["SET_STATUS_404"] === "Y"),
@@ -290,10 +280,6 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 
             $this->executeEpilog();
 	        $this->showEditButtons();
-
-            if (isset($this->arResult["__RETURN_VALUE"])) {
-                return $this->arResult["__RETURN_VALUE"];
-            }
 
             return $this->arResult;
         }
@@ -332,7 +318,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 		foreach ($this->dependModules as $module) {
 			if (!Main\Loader::includeModule($module)) {
 				throw new Main\LoaderException(
-					Loc::getMessage("ITEMS_LIST_MODULE_NOT_FOUND") . " class.php" . $module
+					Loc::getMessage("ITEMS_LIST_MODULE_NOT_FOUND") . " class.php " . $module
 				);
 			}
 		}
@@ -350,7 +336,6 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 			    (array) $params["REQUIRED_" . strtoupper($key) . "_PARAMS"]
 		    );
 	    }
-
 	    foreach ($this->requiredParams["int"] as $param) {
             if (intval($this->arParams[$param]) <= 0) {
                 throw new Main\ArgumentNullException($param);
@@ -368,7 +353,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
      * определяет читать данные из кэша или нет
      * @return bool
      */
-    protected function readDataFromCache()
+    protected function readDataFromCache() : bool
     {
 		$user = $GLOBALS["USER"];
 		$params = $this->arParams;
@@ -401,7 +386,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
      *
      * @return bool
      */
-    protected function endDataCache()
+    protected function endDataCache() : bool
     {
         if ($this->fromCache) {
             return false;
@@ -451,51 +436,58 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 	}
 
 	/**
-	 * формируем список элементов
+	 * Формируется массив $arResult
 	 */
 	protected function getResult()
 	{
-		$useTilda = true;
-		$arSort = $this->arSort ?: [];
-		$iblockId = $this->arParams["IBLOCK_ID"];
+		$showNavCHain = $this->arParams["SET_CHAIN"] === "Y";
 		$propertyCodes = $this->arParams["ADDITIONAL_PROPERTIES"] ?: [];
 		$getProperties = $this->arParams["SHOW_PROPERTIES"] !== 'N';
 		$hidePicture = $this->arParams["HIDE_PICTURES"] === "Y";
-		$showNavCHain = $this->arParams["SHOW_SECTIONS_CHAIN"] === "Y";
 
 		$this->arResult = [
-			"TITLE" => "",
-			"DESCRIPTION" => "",
-			"IBLOCK_ID" => $iblockId,
-			"SECTION_ID" => $this->arParams['SECTION_ID'],
-			"SECTION" => [],
-			"NAV_CHAIN" => [],
-			"FILTER" => [],
-			"SORT" => $arSort,
-			"NAV_DATA" => [],
+			"TITLE" => $this->arParams["TITLE"] ?: null,
+			"DESCRIPTION" => $this->arParams["DESCRIPTION"] ?: null,
 			"ITEMS" => [],
-			"__RETURN_VALUE" => null,
 		];
 
-		//Получаем список элементов
-		$arItems = $this->getItems($iblockId);
+		if ($this->arParams['SECTION_ID']) {
+			$this->arResult['SECTION_ID'] = $this->arParams['SECTION_ID'];
+		}
+
+		//Получаем список элементов без дополнительных свойств
+		[$arItems, $navParams] = $this->getItems($this->filter, $this->limit, $this->showNav);
 
 		//Получаем свойства элементов
 		if ($getProperties) {
-			$arItems = $this->getProperties($arItems, $propertyCodes);
+			//Получаем значения свойств для всех элементов на странице
+			$arItems = $this->getProperties($this->iblockId, $arItems, $propertyCodes);
+
+			//Если среди полученных свойств есть дополнительные свойства типа "Справочник", получаем эти записи
+			$arItems = $this->getHLBlockPropertiesElements($arItems);
+
+			//Если среди полученных свойств есть дополнительные свойства "Привязка к элементам", получаем эти элементы
+			$arPropertiesElements = $this->getIblockPropertiesElements($arItems);
+
+			$arSubPropertiesElements = $this->getIblockPropertiesElements($arPropertiesElements);
+			$arSubPropertiesElements = $this->getHLBlockPropertiesElements($arSubPropertiesElements);
+			$arPropertiesElements = $this->associateItemsWithArray($arPropertiesElements, $arSubPropertiesElements);
+
+			$arItems = $this->associateItemsWithArray($arItems, $arPropertiesElements);
 		}
 
-		$fileArray = [];
+		//Если нужно получать картинки и какие-то файлы для элементов
 		if (!$hidePicture) {
 			//get files array from items
-			$fileArray = $this->getFilesArray($arItems);
+			$fileArray = $this->getFilesArrayFromItems();
+
+			if (!empty($fileArray)) {
+				$arItems = $this->checkArrayAndFillFile($arItems, $fileArray);
+			}
+
 		}
 
-		if ($useTilda) {
-			$arItems = $this->getTildaFields($arItems, $fileArray);
-		}
-
-		$this->arResult["NAV_DATA"] = $this->setNavData();
+		$this->arResult["NAV_DATA"] = $this->setNavData($navParams);
 		$this->arResult["ITEMS"] = $arItems;
 
 		if ($showNavCHain) {
@@ -503,6 +495,239 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 		}
 
 		$this->getSectionData();
+	}
+
+	protected function checkArrayAndFillFile(array $array, array $fileArray) {
+		foreach($array as $code => &$internal) {
+
+			if (is_array($internal) && $code !== 'PROPERTIES') {
+				$internal = $this->checkArrayAndFillFile($internal, $fileArray);
+			}
+			elseif (is_array($internal) && $code === 'PROPERTIES') {
+				foreach($internal as $propCode => &$property) {
+					if ($property['LINK_IBLOCK_ID'] && is_array($property['VALUE'])) {
+						$property['VALUE'] = $this->checkArrayAndFillFile($property['VALUE'], $fileArray);
+					}
+					elseif ($property['PROPERTY_TYPE'] == 'F') {
+						if (is_array($property['VALUE'])) {
+							foreach($property['VALUE'] as &$currentFileId) {
+								if ($currentFileId) $currentFileId = $fileArray[$currentFileId];
+							}
+						}
+						elseif ($property['VALUE']) {
+							$property['VALUE'] = $fileArray[$property['VALUE']];
+						}
+					}
+				}
+			}
+			else {
+				if ($code === 'PREVIEW_PICTURE' && $internal > 0) {
+					$internal = $fileArray[$internal] ?: $internal;
+				}
+			}
+		}
+
+		return $array;
+	}
+
+	protected function associateItemsWithArray(array $arPropertiesElements, array $arSubPropertiesElements)
+	{
+		foreach($arPropertiesElements as &$arPropertiesElement) {
+			foreach($arPropertiesElement['PROPERTIES'] as &$property) {
+				if ($property['LINK_IBLOCK_ID'] && $property['VALUE']) {
+					foreach($arSubPropertiesElements as $subItem) {
+						if ($subItem['IBLOCK_ID'] == $property['LINK_IBLOCK_ID'] && $subItem['ID'] == $property['VALUE']) {
+							$property['VALUE'] = $subItem;
+						}
+						elseif ($subItem['IBLOCK_ID'] == $property['LINK_IBLOCK_ID'] && is_array($property['VALUE'])) {
+							foreach($property['VALUE'] as &$propertyValue) {
+								if ($propertyValue == $subItem['ID']) {
+									$propertyValue = $subItem;
+								}
+							}
+							unset($propertyValue);
+						}
+					}
+				}
+			}
+			unset($property);
+		}
+		unset($arPropertiesElement);
+
+		return $arPropertiesElements;
+	}
+
+	/**
+	 * Формируется список элементов без дополнительных свойств
+	 * @param ElementsFilter $filter
+	 * @param int $limit
+	 * @param bool $showNav
+	 * @param bool $debug
+	 * @return array
+	 */
+	protected function getItems(ElementsFilter $filter, int $limit, bool $showNav, $debug = false) : array
+	{
+		$selectItemsFields = $this->getSelect();
+		$arSort = $this->arSort ?: [];
+
+		//Если для сортировки используется поле RAND
+		if ($this->useRandomSort) {
+			$filter->setRandomSort();
+		}
+
+		$arFilter = $filter->getFilter();
+		$arRuntime = $filter->getRuntime();
+
+		//Навигация
+		$navParams = null;
+		if ($showNav) {
+			//Инициализируем объект навигации, если это требуется
+			$navParams = $this->initNavData();
+		}
+
+		$dbItems = ElementTable::getList([
+			"filter" => $arFilter,
+			"select" => $selectItemsFields,
+			"offset" => $navParams ? $navParams->getOffset() : 0,
+			"limit" => $navParams ? $navParams->getLimit() : $limit,
+			"count_total" => $showNav && $navParams,
+			"order" => $arSort,
+			"runtime" => $arRuntime
+		]);
+
+		if ($showNav && $navParams) {
+			$navParams->setRecordCount($dbItems->getCount());
+		}
+
+		return [$this->formatItems($dbItems, $debug), $navParams];
+	}
+
+	protected function getIblockPropertiesElements($arItems = [], $debug = false)
+	{
+		if (empty($arItems)) return $arItems;
+
+		$iblockIds = [];
+		$ids = [];
+		foreach($arItems as $arItem) {
+			foreach($arItem['PROPERTIES'] as $property) {
+				if ($property['LINK_IBLOCK_ID'] <= 0 || !$property['VALUE']) {
+					continue;
+				}
+
+				$this->setFileIdsFromProperty($property);
+
+				$iblockIds[$property['LINK_IBLOCK_ID']] = $property['LINK_IBLOCK_ID'];
+
+				if (!is_array($property['VALUE']) && $property['VALUE'] > 0) {
+					$ids[] = (int) $property['VALUE'];
+				}
+				elseif (is_array($property['VALUE'])) {
+					$ids = array_merge($ids, $property['VALUE']);
+				}
+			}
+		}
+
+		$ids = array_unique($ids);
+		$iblockIds = array_unique($iblockIds);
+
+		if (count($ids) > 0 && count($iblockIds) > 0) {
+			$filter = ElementsFilter::getInstance();
+			$filter->add('IBLOCK_ID', $iblockIds);
+			$filter->add('ID', $ids);
+			$filter->add('ACTIVE', 'Y');
+
+			[$arPropertiesElements, $newNavParams] = $this->getItems($filter, false, false, true);
+
+			$arPropertiesElements = $this->getProperties($iblockIds, $arPropertiesElements, []);
+
+			foreach($arPropertiesElements['PROPERTIES'] as $arProperty) {
+				$this->setFileIdsFromProperty($arProperty);
+			}
+
+			return $arPropertiesElements;
+		}
+
+		return [];
+	}
+
+	protected function getHLBlockPropertiesElements($arItems = [])
+	{
+		if (empty($arItems)) return $arItems;
+
+		$hlDbs = [];
+		foreach($this->HLDataGenerator($arItems) as $table) {
+			$hlDbs[$table['TABLE']]['VALUE'] = is_array($hlDbs[$table['TABLE']]['VALUE']) ? array_unique(array_merge($hlDbs[$table['TABLE']]['VALUE'], $table['VALUE'])) : $table['VALUE'];
+			$hlDbs[$table['TABLE']]['ID'][$table['ID']][$table['PROPERTY_CODE']] = $table['VALUE'];
+		}
+		unset($table);
+
+		if (empty($hlDbs) || !\Bitrix\Main\Loader::includeModule("highloadblock")) {
+			return $arItems;
+		}
+
+		$allTables = \Bitrix\Highloadblock\HighloadBlockTable::getList([
+			'filter' => [
+				'TABLE_NAME' => array_keys($hlDbs)
+			]
+		])->fetchAll();
+
+		foreach($allTables as $table) {
+			if ($hlDbs[$table['TABLE_NAME']] && !empty($hlDbs[$table['TABLE_NAME']]['VALUE'])) {
+				$entityDataClass = \Bitrix\Highloadblock\HighloadBlockTable::compileEntity($table)->getDataClass();
+
+				$result = $entityDataClass::getList([
+					'filter' => [
+						'UF_XML_ID' => $hlDbs[$table['TABLE_NAME']]['VALUE']
+					]
+				])->fetchAll();
+
+				foreach($result as $res) {
+					$hlDbs[$table['TABLE_NAME']]['RESULT'][$res['UF_XML_ID']] = $res;
+				}
+			}
+		}
+		unset($table);
+
+		foreach($hlDbs as $table) {
+			foreach($table['ID'] as $id => $value) {
+				$key = array_search($id, array_column($arItems, 'ID'));
+
+				if ($key !== false) {
+					foreach($value as $propCode => $propValue) {
+
+						$elementPropertyValue = $arItems[$key]['PROPERTIES'][$propCode]['VALUE'];
+
+						if(is_string($elementPropertyValue) && $elementPropertyValue) {
+							$arItems[$key]['PROPERTIES'][$propCode]['VALUE'] = $table['RESULT'][$elementPropertyValue];
+						}
+						elseif (is_array($elementPropertyValue)) {
+							foreach($elementPropertyValue as $i => $elementHLValue) {
+								$arItems[$key]['PROPERTIES'][$propCode]['VALUE'][$i] = $table['RESULT'][$elementHLValue];
+							}
+						}
+					}
+				}
+			}
+		}
+
+
+		return $arItems;
+	}
+
+	protected function HLDataGenerator($arItems = []) {
+		foreach($arItems as $arItem) {
+			foreach($arItem['PROPERTIES'] as $code => $property) {
+				$userTypeSettings = $property['USER_TYPE_SETTINGS'];
+				if (is_array($userTypeSettings) && $userTypeSettings['TABLE_NAME']) {
+					yield([
+						'TABLE' => $userTypeSettings['TABLE_NAME'],
+						'VALUE' => is_array($property['VALUE']) ? $property['VALUE'] : [$property['VALUE']],
+						'ID' => $arItem['ID'],
+						'PROPERTY_CODE' => $code
+					]);
+				}
+			}
+		}
 	}
 
 	protected function getSectionData()
@@ -513,12 +738,11 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 			$section = [];
 			foreach($this->arResult["ITEMS"] as $arItem) {
 				if ($arItem['SECTION']['ID'] == $this->arParams['SECTION_ID']) {
-					$section = $arItem['SECTION'];
+					$this->arResult['SECTION'] = $arItem['SECTION'];
 					break;
 				}
 			}
 
-			$this->arResult['SECTION'] = $section;
 			if ($this->arResult['SECTION']['PAGE_URL']) {
 				$section['SECTION_CODE'] = $this->arResult['SECTION'];
 				$this->arResult['SECTION']['PAGE_URL'] = \CIBlock::ReplaceSectionUrl($this->arResult['SECTION']['PAGE_URL'], $section, false, 'E') ?: '';
@@ -527,162 +751,78 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 		}
 	}
 
-	protected function getFilesArray($arItems) : array
+	protected function getFilesArrayFromItems() : array
 	{
-		//get files array from items
-		$fileArray = [];
-		$fileIdArray = [];
-		foreach($arItems as $arItem) {
-			if ($arItem['PREVIEW_PICTURE']) $fileIdArray[] = $arItem['PREVIEW_PICTURE'];
-			if ($arItem['DETAIL_PICTURE']) $fileIdArray[] = $arItem['DETAIL_PICTURE'];
+		// Собираем массив с файлами одним запросом (превью и детальные картинки)
+		$fileArray = $this->getFilesArray($this->fileIdsArray);
 
-			foreach ($arItem['PROPERTIES'] as $arProperty) {
-				if ($arProperty['PROPERTY_TYPE'] == 'F' && !is_array($arProperty['VALUE']) && $arProperty['VALUE']) {
-					$fileIdArray[] = $arProperty['VALUE'];
-				}
+		return $fileArray ?: [];
+	}
 
-				if ($arProperty['PROPERTY_TYPE'] == 'F' && is_array($arProperty['VALUE'])) {
-					foreach($arProperty['VALUE'] as $fileId) {
-						if ($fileId) $fileIdArray[] = $fileId;
-					}
-				}
-			}
-		}
+	protected function getFilesArray($ids) : array
+	{
+		$array = [];
 
 		// Собираем массив с файлами одним запросом (превью и детальные картинки)
-		if (!empty($fileIdArray)) {
+		if (is_array($ids) && !empty($ids)) {
 			$uploadDir = \COption::GetOptionString("main", "upload_dir", "upload");
-			$dbFiles = \CFile::GetList([], ['@ID' => implode($fileIdArray, ',')]);
+			$dbFiles = \CFile::GetList([], ['@ID' => $ids]);
 			while($dbFile = $dbFiles->fetch()) {
 				$dbFile['SRC'] = "/".$uploadDir."/".$dbFile["SUBDIR"]."/".$dbFile["FILE_NAME"];
-				$fileArray[$dbFile['ID']] = $dbFile;
+
+				unset($dbFile['TIMESTAMP_X']);
+				unset($dbFile['MODULE_ID']);
+				unset($dbFile['HEIGHT']);
+				unset($dbFile['WIDTH']);
+				unset($dbFile['SUBDIR']);
+				unset($dbFile['HANDLER_ID']);
+				unset($dbFile['EXTERNAL_ID']);
+
+				if (!$dbFile['DESCRIPTION']) unset($dbFile['DESCRIPTION']);
+
+				$array[$dbFile['ID']] = $dbFile;
 			}
 		}
 
-		return $fileArray;
+		return $array;
 	}
 
-	protected function getTildaFields($arItems, $fileArray = [])
+	protected function setNavData($navParams) : array
 	{
-		foreach($arItems as &$arItem) {
-			$escapedArray = [];
-			foreach ($arItem as $key => &$value) {
-				if ($key == 'PROPERTIES') continue;
-				$escapedArray['~'.$key] = $value;
-				if (is_string($value)) $value = htmlentities($value);
-			}
-
-			$arItem = array_merge($arItem, $escapedArray);
-
-			if ($arItem['PREVIEW_PICTURE']) {
-				$arItem['~PREVIEW_PICTURE'] = $fileArray[$arItem['PREVIEW_PICTURE']];
-			}
-
-			if ($arItem['DETAIL_PICTURE']) {
-				$arItem['~DETAIL_PICTURE'] = $fileArray[$arItem['DETAIL_PICTURE']];
-			}
-
-			foreach($arItem['PROPERTIES'] as &$property) {
-				if ($property['VALUE'] && $property['PROPERTY_TYPE'] == 'F') {
-					$property['~VALUE'] = $fileArray[$property['VALUE']];
-				}
-			}
-		}
-
-		return $arItems;
-	}
-
-
-	protected function setNavData() : array
-	{
-		$showNav = $this->showNav;
-		$navParams = $this->navParams;
-
-		if ($showNav && $navParams) {
+		if ($navParams) {
 			 return [
-				"NavPageCount"  => $navParams->getPageCount(),
-				"NavPageSize"   => $navParams->getPageSize(),
-				"NavNum"        => $navParams->getId(),
-				"NavPageNomer"  => $navParams->getCurrentPage(),
-				"NavRecordCount" => $navParams->getRecordCount(),
+				"NavPageCount"      => $navParams->getPageCount(),
+				"NavPageSize"       => $navParams->getPageSize(),
+				"NavNum"            => $navParams->getId(),
+				"NavPageNumber"     => $navParams->getCurrentPage(),
+				"NavRecordCount"    => $navParams->getRecordCount(),
 			];
 		}
 
 		return [];
 	}
 
-	protected function getItems() : array
-	{
-		$filter = $this->filter;
-		$selectItemsFields = $this->getSelect();
-		$showNav = $this->showNav;
-		$limit = $this->limit;
-		$navParams = &$this->navParams;
-		$arSort = $this->arSort ?: [];
-		$useRandomSort = $this->useRandomSort;
-		$showActive = $this->arParams["SHOW_ACTIVE"] === "Y";
-
-		if ($showActive) {
-			$filter->add("ACTIVE", "Y");
-		}
-
-		$arFilter = $filter->getFilter();
-		$arRuntime = $filter->getRuntime();
-
-		//Если для сортировки используется поле RAND
-		if ($useRandomSort) {
-			$arRuntime["RAND"] = [
-				"data_type" => "integer",
-				"expression" => ["RAND()", "ID"],
-			];
-		}
-
-		$dbItems = \Bitrix\Iblock\ElementTable::getList([
-			"filter" => $arFilter,
-			"select" => $selectItemsFields,
-			"offset" => $navParams ? $navParams->getOffset() : 0,
-			"limit" => $navParams ? $navParams->getLimit() : $limit,
-			"count_total" => $showNav && $navParams,
-			"order" => $arSort,
-			"group" => ['ID'],
-			"runtime" => $arRuntime
-		]);
-
-		//Навигация
-		if ($showNav && $navParams) {
-			$navParams->setRecordCount($dbItems->getCount());
-		}
-
-		return $this->formatItems($dbItems);
-	}
-
-	protected function getElementsIds($arItems) : array
-	{
-		$elementIds = [];
-		foreach($arItems as $arItem) {
-			$elementIds[] = $arItem['ID'];
-		}
-		return $elementIds;
-	}
-
 	/**
 	 * Получить список свойств для элементов
-	 * @param $arItems
-	 * @param $propertyCodes
+	 * @param int|array $iblockId
+	 * @param array $arItems
+	 * @param array $propertyCodes
 	 * @return array
 	 */
-	protected function getProperties($arItems = [], $propertyCodes = []) : array
+	protected function getProperties(int|array $iblockId, array $arItems = [], array $propertyCodes = []) : array
 	{
 		if (empty($arItems)) return [];
 
-		$iblockId = $this->arParams['IBLOCK_ID'];
-		$elementIds = $this->getElementsIds($arItems);
+		$elementIds = array_map(function($item) {
+			return $item['ID'];
+		}, $arItems);
 
 		$arFilter = [
 			"IBLOCK_ELEMENT_ID" => $elementIds,
 			"PROPERTY.IBLOCK_ID" => $iblockId,
 			"PROPERTY.ACTIVE" => "Y"
 		];
+
 		if (!empty($propertyCodes)) {
 			$arFilter["PROPERTY.CODE"] = $propertyCodes;
 		}
@@ -697,7 +837,16 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 				"VALUE_TYPE",
 				"VALUE_ENUM",
 				"DESCRIPTION",
-				"PROPERTY"
+
+				"PROPERTY.LINK_IBLOCK_ID",
+				"PROPERTY.MULTIPLE",
+				"PROPERTY.NAME",
+				"PROPERTY.PROPERTY_TYPE",
+				"PROPERTY.FILE_TYPE",
+				"PROPERTY.IBLOCK_ID",
+				"PROPERTY.USER_TYPE_SETTINGS",
+				"ENUM_XML_ID" => "ENUM.XML_ID",
+				"ENUM_VALUE" => "ENUM.VALUE",
 			],
 			"filter" => $arFilter,
 			"runtime" => [
@@ -707,6 +856,14 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 						'=this.IBLOCK_PROPERTY_ID' => 'ref.ID',
 					],
 					'join_type' => "INNER"
+				],
+				"ENUM" => [
+					'data_type' => '\Bitrix\Iblock\PropertyEnumerationTable',
+					'reference' => [
+						'=this.IBLOCK_PROPERTY_ID' => 'ref.PROPERTY_ID',
+						'=this.VALUE_ENUM' => 'ref.ID',
+					],
+					'join_type' => "LEFT"
 				]
 			]
 		])->fetchAll();
@@ -720,11 +877,8 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 				if (stripos($fieldCode, $iblockPropertyCode) !== false) {
 					$fieldCode = str_ireplace($iblockPropertyCode, '', $fieldCode);
 				}
-
 				$property[$fieldCode] = $fieldValue;
 			}
-
-			$property['TIMESTAMP_X'] = $property['TIMESTAMP_X']->format($this->defaultDateFormat);
 
 			if ($property['MULTIPLE'] === 'Y') {
 				$property['PROPERTY_VALUE_ID'] = [$property['PROPERTY_VALUE_ID']];
@@ -734,32 +888,69 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 
 			asort($property, SORT_NATURAL);
 
+			$code = $property['CODE'];
+			unset($property['CODE']);
+			unset($property['VALUE_TYPE']);
+			unset($property['PROPERTY_VALUE_ID']);
+			unset($property['PROPERTY_ID']);
+
+			if (!$property['VALUE_ENUM'] || !$property['ENUM_XML_ID'] || !$property['ENUM_VALUE']) {
+				unset($property['VALUE_ENUM']);
+				unset($property['ENUM_XML_ID']);
+				unset($property['ENUM_VALUE']);
+			}
+
+			if ($property['ENUM_VALUE']) {
+				$property['VALUE'] = $property['ENUM_VALUE'];
+				unset($property['ENUM_VALUE']);
+			}
+
+			if (!$property['LINK_IBLOCK_ID']) {
+				unset($property['LINK_IBLOCK_ID']);
+			}
+
+			if (!$property['FILE_TYPE']) {
+				unset($property['FILE_TYPE']);
+			}
+
+			if ($property['USER_TYPE_SETTINGS']) {
+				$property['USER_TYPE_SETTINGS'] = unserialize($property['USER_TYPE_SETTINGS']);
+
+				if (is_array($property['USER_TYPE_SETTINGS']) && empty($property['USER_TYPE_SETTINGS'])) {
+					unset($property['USER_TYPE_SETTINGS']);
+				}
+			}
+			else {
+				unset($property['USER_TYPE_SETTINGS']);
+			}
+
+			$propertyIblockId = $property['IBLOCK_ID'];
+			$propertyIblockElementId = $property['IBLOCK_ELEMENT_ID'];
+
+			$this->setFileIdsFromProperty($property);
+
 			if ($property['MULTIPLE'] === 'Y') {
-				if (!$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]) {
-					$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']] = $property;
+				if (!$arProperties[$propertyIblockId][$propertyIblockElementId][$code]) {
+					$arProperties[$propertyIblockId][$propertyIblockElementId][$code] = $property;
 				}
 				else {
-					$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]['PROPERTY_VALUE_ID'] = array_merge(
-						$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]['PROPERTY_VALUE_ID'],
-						$property['PROPERTY_VALUE_ID']
-					);
-					$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]['VALUE'] = array_merge(
-						$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]['VALUE'],
+					$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['VALUE'] = array_merge(
+						$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['VALUE'],
 						$property['VALUE']
 					);
-					$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]['DESCRIPTION'] = array_merge(
-						$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']]['DESCRIPTION'],
+					$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['DESCRIPTION'] = array_merge(
+						$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['DESCRIPTION'],
 						$property['DESCRIPTION']
 					);
 				}
 			}
 			else {
-				$arProperties[$property['IBLOCK_ELEMENT_ID']][$property['CODE']] = $property;
+				$arProperties[$propertyIblockId][$propertyIblockElementId][$code] = $property;
 			}
 		}
 
 		foreach($arItems as &$arItem) {
-			$arItem['PROPERTIES'] = $arProperties[$arItem['ID']];
+			$arItem['PROPERTIES'] = $arProperties[$arItem['IBLOCK_ID']][$arItem['ID']];
 		}
 
 		return $arItems;
@@ -786,9 +977,30 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 		return $navChain;
 	}
 
-	protected function getSelect()
+	/**
+	 * Формирует SELECT для выборки элементов
+	 * @return array|string[]
+	 */
+	protected function getSelect() : array
 	{
 		$paramsSelect = $this->arParams["ADDITIONAL_SELECT"];
+
+		$setDetailUrl = $this->arParams["SET_DETAIL_URL"] === "Y";
+
+		if ($setDetailUrl) {
+			$this->defaultSelect = array_merge(
+				$this->defaultSelect,
+				[
+					"IBLOCK.ID",
+					"IBLOCK.LIST_PAGE_URL",
+					"IBLOCK.SECTION_PAGE_URL",
+					"IBLOCK.DETAIL_PAGE_URL",
+
+					"IBLOCK_SECTION.ID",
+					"IBLOCK_SECTION.CODE",
+				]
+			);
+		}
 
 		if (!$paramsSelect) {
 			return $this->defaultSelect;
@@ -798,6 +1010,17 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 				return ["*"];
 			}
 			return array_merge($this->defaultSelect, $paramsSelect);
+		}
+	}
+
+
+	protected function setFileIdsFromProperty($property)
+	{
+		if ($property['PROPERTY_TYPE'] === 'F' && is_array($property['VALUE'])) {
+			$this->fileIdsArray = array_merge($this->fileIdsArray, $property['VALUE']);
+		}
+		elseif ($property['PROPERTY_TYPE'] === 'F' && $property['VALUE']) {
+			$this->fileIdsArray[] = $property['VALUE'];
 		}
 	}
 
@@ -825,6 +1048,9 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 		);
 	}
 
+	/**
+	 * @return array
+	 */
 	protected function setMeta() : array
 	{
 		global $APPLICATION;
@@ -871,13 +1097,15 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 	}
 
 	/**
-	 * @param $dbItems
+	 * @param Result $dbItems
+	 * @param bool $debug
 	 * @return array
 	 */
-	protected function formatItems($dbItems) : array
+	protected function formatItems(Result $dbItems, bool $debug = false) : array
 	{
-		$dateFormat = $this->arParams["DATE_FORMAT"] ?: $this->defaultDateFormat;
-		$formatDate = $this->arParams["FORMAT_DATE"] !== "N";
+		$formatDate = $this->arParams["FORMAT_DATE"] !== "N"; //Форматировать ли дату
+		$dateFormat = $this->arParams["DATE_FORMAT"];
+		$setDetailUrl = $this->arParams["SET_DETAIL_URL"] === "Y";
 
 		$arItems = [];
 		foreach($dbItems as $dbItem) {
@@ -930,13 +1158,23 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
 				}
 			}
 
-			$urlTemplates = $this->setUrlTemplates($arItem);
-			$arItem = array_merge($arItem, $urlTemplates);
+			if ($setDetailUrl) {
+				$urlTemplates = $this->setUrlTemplates($arItem);
+				$arItem = array_merge($arItem, $urlTemplates);
+			}
 
 			$arItem['PROPERTIES'] = [];
 
+			if (empty($arItem['SECTION'])) {
+				unset($arItem['IBLOCK_SECTION_ID']);
+				unset($arItem['SECTION']);
+			}
+
+			if ($arItem['PREVIEW_PICTURE']) $this->fileIdsArray[] = $arItem['PREVIEW_PICTURE'];
+
 			$arItems[] = $arItem;
 		}
+
 		return $arItems;
 	}
 
@@ -945,7 +1183,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
      */
     protected function initEditButtons()
     {
-        if ($this->arParams["IBLOCK_ID"] <= 0) {
+        if ($this->iblockId <= 0) {
             return;
         }
 
@@ -974,18 +1212,21 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
                 $arItem["DELETE_LINK"] = $arButtons["edit"]["delete_element"]["ACTION_URL"];
             }
         }
+
         unset($arItem);
     }
 
 	/**
 	 * Создает объект пагинации
 	 */
-	protected function initNavData()
+	protected function initNavData() : PageNavigation
 	{
-		if ($this->limit && $this->showNav && $this->navigationName && $this->limit > 0) {
-			$this->navParams = new PageNavigation($this->navigationName);
-			$this->navParams->allowAllRecords(true)->setPageSize($this->limit)->initFromUri();
-		}
+		if (!$this->limit) $this->limit = 150;
+		if (!$this->navigationName) $this->navigationName = "nav";
+
+		$navParams = new PageNavigation($this->navigationName);
+		$navParams->allowAllRecords(true)->setPageSize($this->limit)->initFromUri();
+		return $navParams;
 	}
 
     /**
@@ -1017,7 +1258,7 @@ class TryhardyIblockItemsComponent extends CBitrixComponent
         $arButtons = CIBlock::GetComponentMenu(
             $APPLICATION->GetPublicShowMode(),
             CIBlock::GetPanelButtons(
-                $this->arParams["IBLOCK_ID"],
+                $this->iblockId,
                 0,
                 $this->arResult["SECTION_ID"],
                 ["SECTION_BUTTONS" => true]
