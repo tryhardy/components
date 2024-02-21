@@ -14,13 +14,13 @@
   "repositories": [
     {
       "type": "git",
-      "url": "https://github.com/tryhardy/bitrix-filter.git"
+      "url": "https://github.com/tryhardy/bitrix.filter.git"
     }
   ],
   "require": {
     "php": ">=7.4",
     "ext-mbstring": "*",
-    "tryhardy/bitrix-filter": "dev-master",
+    "tryhardy/bitrix.filter": "master",
     "composer/installers": "~1"
   },
   "config": {
