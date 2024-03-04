@@ -7,7 +7,7 @@
 ```json
 {
   "require": {
-    "tryhardy/bitrix-filter": "dev-master",
+    "tryhardy/bitrix.filter": "dev-master",
     "tryhardy/iblock.items": "dev-master"
   },
   "repositories": [
