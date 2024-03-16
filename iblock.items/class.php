@@ -480,6 +480,8 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 		[$arItems, $navParams] = $this->getItems($this->filter, $this->limit, $this->showNav);
 
 		if ($getProperties) {
+			//TODO сделать блок кода ниже рекурсивным
+			$getRecursice = true;
 			$getSecondLevelItems = true;
 
 			//Получить свойства элементов и их значения с подзапросом для enums (1 уровень)
@@ -488,18 +490,21 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 			$arItems = $this->getHLBlockPropertiesElements($arItems);
 			//Получить разделы для свойств типа "Привязка к разделам"
 			$arItems = $this->getSectionPropertiesElements($arItems);
-			//TODO получить пользователя для свойств типа "Привязка к пользователям"
+			//Получить пользователя для свойств типа "Привязка к пользователям"
 			$arItems = $this->getUserPropertiesElements($arItems);
 
 			//Если у элеметов из массива $arItems есть свойства типа "Привязка к элементам", то получить эти элементы и их свойства
 			$arPropertiesElements = $this->getIblockPropertiesElements($arItems);
 			$arPropertiesElements = $this->getHLBlockPropertiesElements($arPropertiesElements);
 			$arPropertiesElements = $this->getSectionPropertiesElements($arPropertiesElements);
+			$arPropertiesElements = $this->getUserPropertiesElements($arPropertiesElements);
 
 			if ($getSecondLevelItems) {
 				$arSubPropertiesElements = $this->getIblockPropertiesElements($arPropertiesElements);
 				$arSubPropertiesElements = $this->getHLBlockPropertiesElements($arSubPropertiesElements);
 				$arSubPropertiesElements = $this->getSectionPropertiesElements($arSubPropertiesElements);
+				$arSubPropertiesElements = $this->getUserPropertiesElements($arSubPropertiesElements);
+
 				$arPropertiesElements = $this->associateItemsWithArray($arPropertiesElements, $arSubPropertiesElements);
 			}
 
