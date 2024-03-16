@@ -251,12 +251,7 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 
             if (!$this->readDataFromCache()) {
 				$this->getResult();
-	            echo "<pre>";
-	            print_r('============$this->arResult==================');
-	            echo "</pre>";
-	            echo "<pre>";
-	            print_r($this->arResult);
-	            echo "</pre>";
+
 	            $this->arResult['TEMPLATE_DATA'] = $this->changeKeyCase($this->arResult);
 
 	            if (defined("BX_COMP_MANAGED_CACHE")) {
