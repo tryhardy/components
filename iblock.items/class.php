@@ -20,6 +20,8 @@ use Tryhardy\BitrixFilter\ElementsFilter;
 
 class SampleListIblockItemsComponent extends \CBitrixComponent
 {
+	protected const USER_TYPE_USER = 'UserID';
+
 	protected int $iblockId;
     //кешируемые ключи arResult
     protected array $resultCacheKeys = [
@@ -194,7 +196,7 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 	 * @param array $params
 	 * @return void
 	 */
-	protected function onPrepareClassProperties(array $params = [])
+	protected function onPrepareClassProperties(array $params = []) : void
 	{
 		$this->iblockId = $params["IBLOCK_ID"];
 		$this->fromCache = $params["CACHE_TIME"] > 0;
@@ -210,29 +212,28 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 	}
 
 	/**
-	 * подготавливает объект фильтра для выборки элементов
+	 * Prepares the filter object for selecting elements
 	 * @return ElementsFilter
+	 * @throws Exception
 	 */
 	protected function onPrepareFilter() : ElementsFilter
 	{
 		$params = $this->arParams;
-		$filter = $params["FILTER"];
+		$filter = ElementsFilter::getInstance();
 
-		if (!$filter->get("IBLOCK_ID") || $filter->get("IBLOCK_ID") != $params["IBLOCK_ID"]) {
-			$filter->add("IBLOCK_ID", $params["IBLOCK_ID"]);
-		}
+		$filter->add("IBLOCK_ID", $params["IBLOCK_ID"]);
 
 		if ($params["SECTION_ID"] > 0) {
-			$includeSubsections = !($params["INCLUDE_SUBSECTIONS"] == "N");
-			$filter = $filter->addSections("IBLOCK_SECTION_ID", (int) $params["SECTION_ID"], $includeSubsections);
+			$includeSubsections = $params["INCLUDE_SUBSECTIONS"] !== "N";
+			$filter->addSections("IBLOCK_SECTION_ID", (int) $params["SECTION_ID"], $includeSubsections);
 		}
 
 		if ($params["SECTION_GLOBAL_ACTIVE"] === "Y") {
-			$filter = $filter->add("IBLOCK_SECTION.GLOBAL_ACTIVE", $params["SECTION_GLOBAL_ACTIVE"]);
+			$filter->add("IBLOCK_SECTION.GLOBAL_ACTIVE", $params["SECTION_GLOBAL_ACTIVE"]);
 		}
 
 		if ($this->arParams["SHOW_ACTIVE"] === "Y") {
-			$filter = $filter->add("ACTIVE", "Y");
+			$filter->add("ACTIVE", "Y");
 		}
 
 		return $filter;
@@ -241,26 +242,29 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
     public function executeComponent()
     {
         try {
-			$params = $this->arParams;
 			//Проверяем, все ли обязательные параметры заполнены
-	        $this->checkParams($params);
+	        $this->checkParams($this->arParams);
 			//Проверяем, все ли модули подключены
 	        $this->checkModules();
 			//Устанавливаем свойства класса, необходимые для работы методов ниже
-			$this->onPrepareClassProperties($params);
+			$this->onPrepareClassProperties($this->arParams);
 
             if (!$this->readDataFromCache()) {
 				$this->getResult();
-				$result = $this->arResult;
-				echo "<pre>";
-				print_r($result);
-				echo "</pre>";
-                if (defined("BX_COMP_MANAGED_CACHE")) {
+	            echo "<pre>";
+	            print_r('============$this->arResult==================');
+	            echo "</pre>";
+	            echo "<pre>";
+	            print_r($this->arResult);
+	            echo "</pre>";
+	            $this->arResult['TEMPLATE_DATA'] = $this->changeKeyCase($this->arResult);
+
+	            if (defined("BX_COMP_MANAGED_CACHE")) {
                     global $CACHE_MANAGER;
                     $CACHE_MANAGER->RegisterTag("iblock_id_" . $this->iblockId);
                 }
 
-                if (empty($result["ITEMS"]) && $params["SET_STATUS_404"] === "Y") {
+                if (empty($this->arResult["ITEMS"]) && $this->arParams["SET_STATUS_404"] === "Y") {
                     $this->abortResultCache();
                     Tools::process404(
                         "",
@@ -288,6 +292,25 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
             ShowError($e->getMessage());
         }
     }
+
+	/**
+	 * A method to recursively change the case of keys in a multidimensional array.
+	 *
+	 * @param array $array The input array to change the key cases.
+	 * @return array The array with keys' case changed.
+	 */
+	protected function changeKeyCase(array $array) : array
+	{
+		$case = CASE_LOWER;
+		$array = array_change_key_case($array, $case);
+
+		foreach($array as &$value) {
+			if (is_array($value)) {
+				$value = $this->changeKeyCase($value);
+			}
+		}
+		return $array;
+	}
 
 	/**
 	 * действия после выполения компонента, например установка заголовков из кеша
@@ -437,6 +460,7 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 
 	/**
 	 * Формируется массив $arResult
+	 * @throws Exception
 	 */
 	protected function getResult()
 	{
@@ -451,40 +475,43 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 			"ITEMS" => [],
 		];
 
-		if ($this->arParams['SECTION_ID']) {
-			$this->arResult['SECTION_ID'] = $this->arParams['SECTION_ID'];
-		}
+		$this->arResult['SECTION_ID'] = $this->arParams['SECTION_ID'] ?? null;
 
-		//Получаем список элементов без дополнительных свойств
 		[$arItems, $navParams] = $this->getItems($this->filter, $this->limit, $this->showNav);
 
-		//Получаем свойства элементов
 		if ($getProperties) {
-			//Получаем значения свойств для всех элементов на странице
+			$getSecondLevelItems = true;
+
+			//Получить свойства элементов и их значения с подзапросом для enums (1 уровень)
 			$arItems = $this->getProperties($this->iblockId, $arItems, $propertyCodes);
-
-			//Если среди полученных свойств есть дополнительные свойства типа "Справочник", получаем эти записи
+			//Получить значения HL блоков, если у эл-тов есть свойства типа "Справочник"
 			$arItems = $this->getHLBlockPropertiesElements($arItems);
+			//Получить разделы для свойств типа "Привязка к разделам"
+			$arItems = $this->getSectionPropertiesElements($arItems);
+			//TODO получить пользователя для свойств типа "Привязка к пользователям"
+			$arItems = $this->getUserPropertiesElements($arItems);
 
-			//Если среди полученных свойств есть дополнительные свойства "Привязка к элементам", получаем эти элементы
+			//Если у элеметов из массива $arItems есть свойства типа "Привязка к элементам", то получить эти элементы и их свойства
 			$arPropertiesElements = $this->getIblockPropertiesElements($arItems);
+			$arPropertiesElements = $this->getHLBlockPropertiesElements($arPropertiesElements);
+			$arPropertiesElements = $this->getSectionPropertiesElements($arPropertiesElements);
 
-			$arSubPropertiesElements = $this->getIblockPropertiesElements($arPropertiesElements);
-			$arSubPropertiesElements = $this->getHLBlockPropertiesElements($arSubPropertiesElements);
-			$arPropertiesElements = $this->associateItemsWithArray($arPropertiesElements, $arSubPropertiesElements);
+			if ($getSecondLevelItems) {
+				$arSubPropertiesElements = $this->getIblockPropertiesElements($arPropertiesElements);
+				$arSubPropertiesElements = $this->getHLBlockPropertiesElements($arSubPropertiesElements);
+				$arSubPropertiesElements = $this->getSectionPropertiesElements($arSubPropertiesElements);
+				$arPropertiesElements = $this->associateItemsWithArray($arPropertiesElements, $arSubPropertiesElements);
+			}
 
 			$arItems = $this->associateItemsWithArray($arItems, $arPropertiesElements);
 		}
 
-		//Если нужно получать картинки и какие-то файлы для элементов
 		if (!$hidePicture) {
-			//get files array from items
 			$fileArray = $this->getFilesArrayFromItems();
 
 			if (!empty($fileArray)) {
 				$arItems = $this->checkArrayAndFillFile($arItems, $fileArray);
 			}
-
 		}
 
 		$this->arResult["NAV_DATA"] = $this->setNavData($navParams);
@@ -497,7 +524,8 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 		$this->getSectionData();
 	}
 
-	protected function checkArrayAndFillFile(array $array, array $fileArray) {
+	protected function checkArrayAndFillFile(array $array, array $fileArray)
+	{
 		foreach($array as $code => &$internal) {
 
 			if (is_array($internal) && $code !== 'PROPERTIES') {
@@ -530,31 +558,41 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 		return $array;
 	}
 
-	protected function associateItemsWithArray(array $arPropertiesElements, array $arSubPropertiesElements)
+	/**
+	 * Associates items with an array of property elements.
+	 *
+	 * @param array $arItems The array of items to be associated.
+	 * @param array $arPropsElements The array of property elements to associate with the items.
+	 * @return array The array of items with associated property elements.
+	 */
+	protected function associateItemsWithArray(array $arItems, array $arPropsElements) : array
 	{
-		foreach($arPropertiesElements as &$arPropertiesElement) {
-			foreach($arPropertiesElement['PROPERTIES'] as &$property) {
-				if ($property['LINK_IBLOCK_ID'] && $property['VALUE']) {
-					foreach($arSubPropertiesElements as $subItem) {
-						if ($subItem['IBLOCK_ID'] == $property['LINK_IBLOCK_ID'] && $subItem['ID'] == $property['VALUE']) {
-							$property['VALUE'] = $subItem;
-						}
-						elseif ($subItem['IBLOCK_ID'] == $property['LINK_IBLOCK_ID'] && is_array($property['VALUE'])) {
-							foreach($property['VALUE'] as &$propertyValue) {
-								if ($propertyValue == $subItem['ID']) {
-									$propertyValue = $subItem;
-								}
-							}
-							unset($propertyValue);
+		foreach($arItems as &$arItem) {
+			$properties = &$arItem['PROPERTIES'];
+			foreach($properties as &$property) {
+				if ($property['PROPERTY_TYPE'] !== 'E' || empty($property['VALUE'])) {
+					continue;
+				}
+
+				$value = $property['VALUE'];
+				if (is_array($value)) {
+					foreach($value as $i => $v) {
+						$key = array_search($v, array_column($arPropsElements, 'ID'));
+						if ($key !== false) {
+							$value[$i] = $arPropsElements[$key];
 						}
 					}
+				} else {
+					$key = array_search($value, array_column($arPropsElements, 'ID'));
+					if ($key !== false) {
+						$value = $arPropsElements[$key];
+					}
 				}
-			}
-			unset($property);
-		}
-		unset($arPropertiesElement);
 
-		return $arPropertiesElements;
+				$property['VALUE'] = $value;
+			}
+		}
+		return $arItems;
 	}
 
 	/**
@@ -602,91 +640,231 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 		return [$this->formatItems($dbItems, $debug), $navParams];
 	}
 
-	protected function getIblockPropertiesElements($arItems = [], $debug = false)
+	/**
+	 * @param array $arItems
+	 * @param bool $debug
+	 * @return array
+	 */
+	protected function getSectionPropertiesElements(array $arItems = [], bool $debug = false) : array
 	{
-		if (empty($arItems)) return $arItems;
-
-		$iblockIds = [];
-		$ids = [];
+		$sections = [];
 		foreach($arItems as $arItem) {
 			foreach($arItem['PROPERTIES'] as $property) {
-				if ($property['LINK_IBLOCK_ID'] <= 0 || !$property['VALUE']) {
+				if ($property['PROPERTY_TYPE'] !== 'G' || !$property['VALUE']) continue;
+
+				if (!is_array($property['VALUE'])) {
+					$property['VALUE'] = [$property['VALUE']];
+				}
+
+				$sections = array_merge($sections, $property['VALUE']);
+			}
+		}
+		$sections = array_unique($sections);
+
+		if (empty($sections)) return $arItems;
+
+		$rsSection = \Bitrix\Iblock\SectionTable::getList([
+			'filter' => [
+				'ID' => $sections,
+				'ACTIVE' => 'Y',
+				'GLOBAL_ACTIVE' => 'Y'
+			],
+			'select' => ['*']
+		])->fetchAll();
+
+		$sectionMap = [];
+		foreach ($rsSection as $section) {
+			$sectionMap[$section['ID']] = $section;
+		}
+
+		foreach($arItems as &$arItem) {
+			foreach($arItem['PROPERTIES'] as &$property) {
+				if ($property['PROPERTY_TYPE'] !== 'G' || !$property['VALUE']) continue;
+
+				if (is_array($property['VALUE'])) {
+					foreach($property['VALUE'] as $i => $value) {
+						if (isset($sectionMap[$value])) {
+							$property['VALUE'][$i] = $sectionMap[$value];
+						}
+					}
+				}
+				else {
+					if (isset($sectionMap[$property['VALUE']])) {
+						$property['VALUE'] = $sectionMap[$property['VALUE']];
+					}
+				}
+			}
+		}
+
+		return $arItems;
+	}
+
+	protected function getUserPropertiesElements(array $arItems = [], bool $debug = false) : array
+	{
+		$users = [];
+		$arItemKeys = [];
+
+		foreach ($arItems as $key => $arItem) {
+			foreach ($arItem['PROPERTIES'] as $code => $property) {
+				if ($property['USER_TYPE'] !== self::USER_TYPE_USER || empty($property['VALUE'])) {
 					continue;
 				}
 
-				$this->setFileIdsFromProperty($property);
-
-				$iblockIds[$property['LINK_IBLOCK_ID']] = $property['LINK_IBLOCK_ID'];
-
-				if (!is_array($property['VALUE']) && $property['VALUE'] > 0) {
-					$ids[] = (int) $property['VALUE'];
+				if (is_array($property['VALUE'])) {
+					$users = array_merge($users, $property['VALUE']);
+				} else {
+					$users[] = $property['VALUE'];
 				}
-				elseif (is_array($property['VALUE'])) {
-					$ids = array_merge($ids, $property['VALUE']);
+
+				$arItemKeys[$key][$code] = $property['VALUE'];
+			}
+		}
+
+		$users = array_unique($users);
+
+		if (empty($users)) {
+			return $arItems;
+		}
+
+		$dbUsers = \Bitrix\Main\UserTable::getList([
+			'filter' => [
+				'ID' => $users,
+				'ACTIVE' => 'Y',
+				'BLOCKED' => 'N'
+			],
+			'select' => ['ID', 'NAME', 'SECOND_NAME', 'LAST_NAME', 'EMAIL', 'LOGIN']
+		])->fetchAll();
+
+		if (empty($dbUsers)) {
+			return $arItems;
+		}
+
+		$userMap = [];
+		foreach ($dbUsers as $user) {
+			$userMap[$user['ID']] = $user;
+		}
+
+		foreach ($arItemKeys as $key => $data) {
+			if (!isset($arItems[$key])) {
+				continue;
+			}
+
+			foreach ($data as $code => $value) {
+				if (!isset($arItems[$key]['PROPERTIES'][$code])) {
+					continue;
+				}
+
+				if (is_array($arItems[$key]['PROPERTIES'][$code]['VALUE'])) {
+					foreach ($arItems[$key]['PROPERTIES'][$code]['VALUE'] as $i => $userId) {
+						if (isset($userMap[$userId])) {
+							$arItems[$key]['PROPERTIES'][$code]['VALUE'][$i] = $userMap[$userId];
+						}
+					}
+				} else {
+					if (isset($userMap[$arItems[$key]['PROPERTIES'][$code]['VALUE']])) {
+						$arItems[$key]['PROPERTIES'][$code]['VALUE'] = $userMap[$arItems[$key]['PROPERTIES'][$code]['VALUE']];
+					}
 				}
 			}
 		}
 
-		$ids = array_unique($ids);
-		$iblockIds = array_unique($iblockIds);
-
-		if (count($ids) > 0 && count($iblockIds) > 0) {
-			$filter = ElementsFilter::getInstance();
-			$filter->add('IBLOCK_ID', $iblockIds);
-			$filter->add('ID', $ids);
-			$filter->add('ACTIVE', 'Y');
-
-			[$arPropertiesElements, $newNavParams] = $this->getItems($filter, false, false, true);
-
-			$arPropertiesElements = $this->getProperties($iblockIds, $arPropertiesElements, []);
-
-			foreach($arPropertiesElements['PROPERTIES'] as $arProperty) {
-				$this->setFileIdsFromProperty($arProperty);
-			}
-
-			return $arPropertiesElements;
-		}
-
-		return [];
+		return $arItems;
 	}
 
-	protected function getHLBlockPropertiesElements($arItems = [])
+	/**
+	 * Retrieve the elements of the iblock properties.
+	 *
+	 * @param array $arItems The array of items to retrieve properties from
+	 * @param bool $debug Whether to enable debugging
+	 * @return array The elements of the iblock properties
+	 * @throws Exception
+	 */
+	protected function getIblockPropertiesElements(array $arItems = [], bool $debug = false) : array
+	{
+		if (empty($arItems)) return $arItems;
+
+		$ids = [];
+
+		foreach ($arItems as $arItem) {
+			foreach ($arItem['PROPERTIES'] as $property) {
+				$this->setFileIdsFromProperty($property);
+
+				$isIblockProperty = $property['LINK_IBLOCK_ID'] > 0 || $property['PROPERTY_TYPE'] == 'E';
+
+				if ($isIblockProperty && $property['VALUE']) {
+					$ids = array_merge($ids, (array) $property['VALUE']);
+				}
+			}
+		}
+
+		$ids = array_unique(array_filter($ids, function($id) {
+			return $id > 0;
+		}));
+
+		if (empty($ids)) {
+			return [];
+		}
+
+		$filter = ElementsFilter::getInstance();
+		$filter->add('ID', $ids);
+		$filter->add('ACTIVE', 'Y');
+
+		[$elements, $newNavParams] = $this->getItems($filter, false, false, true);
+
+		$iblockIds = array_unique(array_column($elements, 'IBLOCK_ID'));
+
+		$elements = $this->getProperties($iblockIds, $elements, []);
+
+		foreach ($elements['PROPERTIES'] as $arProperty) {
+			$this->setFileIdsFromProperty($arProperty);
+		}
+
+		return $elements;
+	}
+
+	/**
+	 * Retrieves the elements of the HLBlock properties.
+	 *
+	 * @param array $arItems The array of items to retrieve the HLBlock properties elements for.
+	 * @return array The array of items with the HLBlock properties elements retrieved.
+	 * @throws Main\LoaderException
+	 */
+	protected function getHLBlockPropertiesElements(array $arItems = []) : array
 	{
 		if (empty($arItems)) return $arItems;
 
 		$hlDbs = [];
 		foreach($this->HLDataGenerator($arItems) as $table) {
-			$hlDbs[$table['TABLE']]['VALUE'] = is_array($hlDbs[$table['TABLE']]['VALUE']) ? array_unique(array_merge($hlDbs[$table['TABLE']]['VALUE'], $table['VALUE'])) : $table['VALUE'];
+			$hlDbs[$table['TABLE']]['VALUE'] = array_unique(array_merge($hlDbs[$table['TABLE']]['VALUE'] ?? [], $table['VALUE']));
 			$hlDbs[$table['TABLE']]['ID'][$table['ID']][$table['PROPERTY_CODE']] = $table['VALUE'];
 		}
-		unset($table);
 
 		if (empty($hlDbs) || !\Bitrix\Main\Loader::includeModule("highloadblock")) {
 			return $arItems;
 		}
 
+		$tableNames = array_keys($hlDbs);
 		$allTables = \Bitrix\Highloadblock\HighloadBlockTable::getList([
 			'filter' => [
-				'TABLE_NAME' => array_keys($hlDbs)
+				'TABLE_NAME' => $tableNames
 			]
 		])->fetchAll();
 
 		foreach($allTables as $table) {
-			if ($hlDbs[$table['TABLE_NAME']] && !empty($hlDbs[$table['TABLE_NAME']]['VALUE'])) {
+			$tableName = $table['TABLE_NAME'];
+			if (!empty($hlDbs[$tableName]['VALUE'])) {
 				$entityDataClass = \Bitrix\Highloadblock\HighloadBlockTable::compileEntity($table)->getDataClass();
-
 				$result = $entityDataClass::getList([
 					'filter' => [
-						'UF_XML_ID' => $hlDbs[$table['TABLE_NAME']]['VALUE']
+						'UF_XML_ID' => $hlDbs[$tableName]['VALUE']
 					]
 				])->fetchAll();
 
 				foreach($result as $res) {
-					$hlDbs[$table['TABLE_NAME']]['RESULT'][$res['UF_XML_ID']] = $res;
+					$hlDbs[$tableName]['RESULT'][$res['UF_XML_ID']] = $res;
 				}
 			}
 		}
-		unset($table);
 
 		foreach($hlDbs as $table) {
 			foreach($table['ID'] as $id => $value) {
@@ -694,22 +872,20 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 
 				if ($key !== false) {
 					foreach($value as $propCode => $propValue) {
-
 						$elementPropertyValue = $arItems[$key]['PROPERTIES'][$propCode]['VALUE'];
 
 						if(is_string($elementPropertyValue) && $elementPropertyValue) {
 							$arItems[$key]['PROPERTIES'][$propCode]['VALUE'] = $table['RESULT'][$elementPropertyValue];
 						}
 						elseif (is_array($elementPropertyValue)) {
-							foreach($elementPropertyValue as $i => $elementHLValue) {
-								$arItems[$key]['PROPERTIES'][$propCode]['VALUE'][$i] = $table['RESULT'][$elementHLValue];
-							}
+							$arItems[$key]['PROPERTIES'][$propCode]['VALUE'] = array_map(function($elementHLValue) use ($table) {
+								return $table['RESULT'][$elementHLValue];
+							}, $elementPropertyValue);
 						}
 					}
 				}
 			}
 		}
-
 
 		return $arItems;
 	}
@@ -845,6 +1021,7 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 				"PROPERTY.FILE_TYPE",
 				"PROPERTY.IBLOCK_ID",
 				"PROPERTY.USER_TYPE_SETTINGS",
+				"PROPERTY.USER_TYPE",
 				"ENUM_XML_ID" => "ENUM.XML_ID",
 				"ENUM_VALUE" => "ENUM.VALUE",
 			],
@@ -880,80 +1057,108 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 				$property[$fieldCode] = $fieldValue;
 			}
 
+			unset($property['VALUE_ENUM']);
+
 			if ($property['MULTIPLE'] === 'Y') {
 				$property['PROPERTY_VALUE_ID'] = [$property['PROPERTY_VALUE_ID']];
 				$property['VALUE'] = [$property['VALUE']];
 				$property['DESCRIPTION'] = [$property['DESCRIPTION']];
+				$property['ENUM_VALUE'] = [$property['ENUM_VALUE']];
+				$property['ENUM_XML_ID'] = [$property['ENUM_XML_ID']];
 			}
 
 			asort($property, SORT_NATURAL);
 
 			$code = $property['CODE'];
-			unset($property['CODE']);
-			unset($property['VALUE_TYPE']);
-			unset($property['PROPERTY_VALUE_ID']);
-			unset($property['PROPERTY_ID']);
-
-			if (!$property['VALUE_ENUM'] || !$property['ENUM_XML_ID'] || !$property['ENUM_VALUE']) {
-				unset($property['VALUE_ENUM']);
-				unset($property['ENUM_XML_ID']);
-				unset($property['ENUM_VALUE']);
-			}
-
-			if ($property['ENUM_VALUE']) {
-				$property['VALUE'] = $property['ENUM_VALUE'];
-				unset($property['ENUM_VALUE']);
-			}
-
-			if (!$property['LINK_IBLOCK_ID']) {
-				unset($property['LINK_IBLOCK_ID']);
-			}
-
-			if (!$property['FILE_TYPE']) {
-				unset($property['FILE_TYPE']);
-			}
 
 			if ($property['USER_TYPE_SETTINGS']) {
 				$property['USER_TYPE_SETTINGS'] = unserialize($property['USER_TYPE_SETTINGS']);
-
-				if (is_array($property['USER_TYPE_SETTINGS']) && empty($property['USER_TYPE_SETTINGS'])) {
-					unset($property['USER_TYPE_SETTINGS']);
-				}
-			}
-			else {
-				unset($property['USER_TYPE_SETTINGS']);
 			}
 
-			$propertyIblockId = $property['IBLOCK_ID'];
 			$propertyIblockElementId = $property['IBLOCK_ELEMENT_ID'];
 
 			$this->setFileIdsFromProperty($property);
 
+			$property['VALUE'] = $this->getUnserializedValue($property['VALUE']);
+
 			if ($property['MULTIPLE'] === 'Y') {
-				if (!$arProperties[$propertyIblockId][$propertyIblockElementId][$code]) {
-					$arProperties[$propertyIblockId][$propertyIblockElementId][$code] = $property;
+				if (!$arProperties[$propertyIblockElementId][$code]) {
+					$arProperties[$propertyIblockElementId][$code] = $property;
 				}
 				else {
-					$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['VALUE'] = array_merge(
-						$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['VALUE'],
-						$property['VALUE']
-					);
-					$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['DESCRIPTION'] = array_merge(
-						$arProperties[$propertyIblockId][$propertyIblockElementId][$code]['DESCRIPTION'],
-						$property['DESCRIPTION']
-					);
+					if (is_array($property['VALUE']) && !empty($property['VALUE'])) {
+						$arProperties[$propertyIblockElementId][$code]['PROPERTY_VALUE_ID'] = array_merge(
+							$arProperties[$propertyIblockElementId][$code]['PROPERTY_VALUE_ID'],
+							$property['PROPERTY_VALUE_ID']
+						);
+
+						$arProperties[$propertyIblockElementId][$code]['VALUE'] = array_merge(
+							$arProperties[$propertyIblockElementId][$code]['VALUE'],
+							$property['VALUE']
+						);
+						$arProperties[$propertyIblockElementId][$code]['DESCRIPTION'] = array_merge(
+							$arProperties[$propertyIblockElementId][$code]['DESCRIPTION'],
+							$property['DESCRIPTION']
+						);
+					}
+					elseif(is_array($property['ENUM_VALUE']) && !empty($property['ENUM_VALUE'])) {
+						$arProperties[$propertyIblockElementId][$code]['PROPERTY_VALUE_ID'] = array_merge(
+							$arProperties[$propertyIblockElementId][$code]['PROPERTY_VALUE_ID'],
+							$property['PROPERTY_VALUE_ID']
+						);
+						$arProperties[$propertyIblockElementId][$code]['ENUM_VALUE'] = array_merge(
+							$arProperties[$propertyIblockElementId][$code]['ENUM_VALUE'],
+							$property['ENUM_VALUE']
+						);
+						$arProperties[$propertyIblockElementId][$code]['ENUM_XML_ID'] = array_merge(
+							$arProperties[$propertyIblockElementId][$code]['ENUM_XML_ID'],
+							$property['ENUM_XML_ID']
+						);
+					}
+					else {
+						$arProperties[$propertyIblockElementId][$code]['PROPERTY_VALUE_ID'][] = $property['PROPERTY_VALUE_ID'];
+						if ($property['VALUE']) {
+							$arProperties[$propertyIblockElementId][$code]['VALUE'][] = $property['VALUE'];
+							$arProperties[$propertyIblockElementId][$code]['DESCRIPTION'][] = $property['DESCRIPTION'];
+						}
+						if ($property['ENUM_VALUE']) {
+							$arProperties[$propertyIblockElementId][$code]['ENUM_VALUE'][] = $property['ENUM_VALUE'];
+							$arProperties[$propertyIblockElementId][$code]['ENUM_XML_ID'][] = $property['ENUM_XML_ID'];
+						}
+					}
 				}
 			}
 			else {
-				$arProperties[$propertyIblockId][$propertyIblockElementId][$code] = $property;
+				$arProperties[$propertyIblockElementId][$code] = $property;
 			}
 		}
 
 		foreach($arItems as &$arItem) {
-			$arItem['PROPERTIES'] = $arProperties[$arItem['IBLOCK_ID']][$arItem['ID']];
+			$arItem['PROPERTIES'] = $arProperties[$arItem['ID']];
 		}
 
 		return $arItems;
+	}
+
+	/**
+	 * @param $value
+	 * @return array|mixed
+	 */
+	protected function getUnserializedValue($value)
+	{
+		if (!$value) {
+			return $value;
+		}
+
+		if (is_array($value)) {
+			return array_map(function($item) {
+				$decoded = unserialize($item);
+				return $decoded ?: $item;
+			}, $value);
+		}
+
+		$decoded = unserialize($value);
+		return $decoded ?: $value;
 	}
 
 	/**
