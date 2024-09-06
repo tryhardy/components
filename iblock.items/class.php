@@ -773,19 +773,18 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 
 		$tmpEXmlPropItemsIDS = array_unique($this->getEXmlPropertiesFromItems($arItems));
 		if (count($tmpEXmlPropItemsIDS) > 0) {
-			$arPropertiesElements = $this->getIblockPropertiesXmlElements($tmpEXmlPropItemsIDS);
+			$arPropertiesElements = $this->getIblockPropertiesElements($arPropertiesElements, $tmpEXmlPropItemsIDS, true);
 		}
 
 		//Получить элементы для свойств типа "Привязка к элементам"
 		$tmpEPropItemsIDS = array_unique($this->getEPropertiesFromItems($arItems));
-
 		if (count($tmpEPropItemsIDS) > 0) {
 			$arPropertiesElements = $this->getIblockPropertiesElements($arPropertiesElements, $tmpEPropItemsIDS);
-			$arPropertiesElements = $this->getRecursiveProperties($arPropertiesElements, []);
 		}
 
-		$arItems = $this->associateItemsWithArray($arItems, $arPropertiesElements);
+		$arPropertiesElements = $this->getRecursiveProperties($arPropertiesElements, []);
 
+		$arItems = $this->associateItemsWithArray($arItems, $arPropertiesElements);
 		return $arItems;
 	}
 
@@ -1021,10 +1020,16 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 	 * @return array The elements of the iblock properties
 	 * @throws Exception
 	 */
-	protected function getIblockPropertiesElements(array $arPropertiesElements = [], array $ids = [], bool $debug = false) : array
+	protected function getIblockPropertiesElements(array $arPropertiesElements = [], array $ids = [], bool $byXMLId = false) : array
 	{
 		$filter = ElementsFilter::getInstance();
-		$filter->add('ID', $ids);
+		if ($byXMLId) {
+			$filter->add('XML_ID', $ids);
+		}
+		else {
+			$filter->add('ID', $ids);
+		}
+
 		$filter->add('ACTIVE', 'Y');
 
 		[$elements, $newNavParams] = $this->getItems($filter, false, false, true);
@@ -1141,6 +1146,18 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 				],
 			])->fetch();
 		}
+
+		if ($this->arResult['SECTION_URL_ID'] > 0 && $this->arResult['SECTION_URL_ID'] != $this->arResult['SECTION_ID']) {
+			$entity = \Bitrix\Iblock\Model\Section::compileEntityByIblock($this->arParams['IBLOCK_ID']);
+
+			$this->arResult['SECTION_URL'] = $entity::getByPrimary($this->arResult['SECTION_URL_ID'], [
+				'select' => [
+					'ID', 'IBLOCK_ID', 'IBLOCK_SECTION_ID', 'ACTIVE', 'GLOBAL_ACTIVE',
+					'SORT', 'NAME', 'CODE', 'PICTURE', 'LEFT_MARGIN', 'RIGHT_MARGIN',
+					'DEPTH_LEVEL', 'DESCRIPTION', 'DESCRIPTION_TYPE', 'XML_ID', 'UF_*'
+				],
+			])->fetch();
+		}
 	}
 
 	protected function getFilesArrayFromItems() : array
@@ -1224,6 +1241,7 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 				"PROPERTY.USER_TYPE",
 				"ENUM_XML_ID" => "ENUM.XML_ID",
 				"ENUM_VALUE" => "ENUM.VALUE",
+				"FILTER_HINT" => "PROPERTY.HINT",
 			],
 			"filter" => $arFilter,
 			"runtime" => [
@@ -1352,6 +1370,10 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 					"IBLOCK_SECTION.RIGHT_MARGIN",
 				]
 			);
+		}
+
+		if ($this->arParams["SHOW_COUNTER"] == "Y") {
+			$this->defaultSelect[] = "SHOW_COUNTER";
 		}
 
 		if (!$paramsSelect) {
@@ -1591,6 +1613,11 @@ class SampleListIblockItemsComponent extends \CBitrixComponent
 			if ($this->arResult['SECTION']) {
 				$arItem['IBLOCK_SECTION_ID'] = $this->arResult['SECTION']['ID'];
 				$arItem['SECTION'] = $this->arResult['SECTION'];
+			}
+
+			if ($this->arResult['SECTION_URL']) {
+				$arItem['IBLOCK_SECTION_ID'] = $this->arResult['SECTION_URL']['ID'];
+				$arItem['SECTION'] = $this->arResult['SECTION_URL'];
 			}
 
 			if ($setDetailUrl) {
