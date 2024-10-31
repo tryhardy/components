@@ -9,7 +9,6 @@
   "require": {
     "php": ">=8.0",
     "ext-mbstring": "*",
-    "tryhardy/bitrix.filter": "master",
     "composer/installers": "~1"
   },
   "config": {
