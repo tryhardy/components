@@ -18,6 +18,6 @@ $this->setFrameMode(true);
 
 Loc::loadLanguageFile(__FILE__);
 
-//echo "<pre>";
-//print_r($arResult);
-//echo "</pre>";
+echo "<pre>";
+print_r($arResult);
+echo "</pre>";

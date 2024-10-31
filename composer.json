@@ -5,12 +5,7 @@
   "type": "bitrix-d7-component",
   "minimum-stability": "dev",
   "license": "MIT",
-  "repositories": [
-    {
-      "type": "git",
-      "url": "https://github.com/tryhardy/bitrix.filter.git"
-    }
-  ],
+  "repositories": [],
   "require": {
     "php": ">=8.0",
     "ext-mbstring": "*",
