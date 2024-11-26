@@ -8,6 +8,7 @@ use Bitrix\Iblock\Component\Tools;
 use Bitrix\Main;
 use Bitrix\Main\Application;
 use Bitrix\Main\ArgumentException;
+use Bitrix\Main\Data\Cache;
 use Bitrix\Main\Localization\Loc;
 use Bitrix\Main\ORM\Query\Result;
 use Bitrix\Main\UI\PageNavigation;
@@ -265,11 +266,6 @@ class SimpleIblockItemsComponent extends \CBitrixComponent
         $this->limit = $this->arParams["COUNT_LIMIT"];
         $this->navigationName = $this->arParams["NAVIGATION_NAME"];
         $this->useRandomSort = in_array("RAND", array_values($params['SORT'])) || in_array("RAND", array_keys($params['SORT']));
-        $this->class = \Bitrix\Iblock\Iblock::wakeUp($this->iblockId)->getEntityDataClass();
-
-        if (!$this->class) {
-            throw new Exception('Iblock doesnt have API CODE');
-        }
 
 		[$this->filter, $this->runtime] = $this->onPrepareFilter($params);
 		[$this->sort, $this->runtime] = $this->onPrepareSort($params, $this->useRandomSort);
@@ -331,8 +327,16 @@ class SimpleIblockItemsComponent extends \CBitrixComponent
             //Если выбрано "включать подразделы"
             if ($includeSubsections) {
                 unset($filter["SECTIONS.IBLOCK_SECTION_ID"]);
+                $sectionId = $params["SECTION_ID"];
 
-                $section = \Bitrix\Iblock\SectionTable::getById($params["SECTION_ID"])->fetch();
+                $cache = Cache::createInstance();
+                if ($cache->initCache(7200, "iblock_section_{$sectionId}")) { // проверяем кеш и задаём настройки
+                    $section = $cache->getVars();
+                } elseif ($cache->startDataCache()) {
+                    $section = \Bitrix\Iblock\SectionTable::getById($params["SECTION_ID"])->fetch();
+                    $cache->endDataCache($section);
+                }
+
                 if ($section) {
                     $filter['>=SECTIONS.IBLOCK_SECTION.LEFT_MARGIN'] = $section['LEFT_MARGIN'];
                     $filter['<=SECTIONS.IBLOCK_SECTION.RIGHT_MARGIN'] = $section['RIGHT_MARGIN'];
@@ -555,8 +559,12 @@ class SimpleIblockItemsComponent extends \CBitrixComponent
 	 */
 	protected function getResult()
 	{
-		$showNavCHain = $this->arParams["SET_CHAIN"] === "Y";
+        $this->class = \Bitrix\Iblock\Iblock::wakeUp($this->iblockId)->getEntityDataClass();
+        if (!$this->class) {
+            throw new Exception('Iblock doesnt have API CODE');
+        }
 
+		$showNavCHain = $this->arParams["SET_CHAIN"] === "Y";
 		//Получаем ли мы пользовательские свойства (если да, делаются доп. запросы)
 		$getProperties = $this->arParams["SHOW_PROPERTIES"] !== "N";
         //Коды свойств, которые нужно получать
@@ -1155,16 +1163,25 @@ class SimpleIblockItemsComponent extends \CBitrixComponent
 
 	protected function getSectionData()
 	{
-		if ($this->arResult['SECTION_ID'] > 0) {
+        $getUFData = false;
 
-			$entity = \Bitrix\Iblock\Model\Section::compileEntityByIblock($this->arParams['IBLOCK_ID']);
+		if ($this->arResult['SECTION_ID'] > 0) {
+            $select = [
+                'ID', 'IBLOCK_ID', 'IBLOCK_SECTION_ID', 'ACTIVE', 'GLOBAL_ACTIVE',
+                'SORT', 'NAME', 'CODE', 'PICTURE', 'LEFT_MARGIN', 'RIGHT_MARGIN',
+                'DEPTH_LEVEL', 'DESCRIPTION', 'DESCRIPTION_TYPE', 'XML_ID',
+            ];
+
+            if ($getUFData) {
+                $entity = \Bitrix\Iblock\Model\Section::compileEntityByIblock($this->arParams['IBLOCK_ID']);
+                $select[] = 'UF_*';
+            }
+            else {
+                $entity = \Bitrix\Iblock\SectionTable::class;
+            }
 
 			return $entity::getByPrimary($this->arParams['SECTION_ID'], [
-				'select' => [
-					'ID', 'IBLOCK_ID', 'IBLOCK_SECTION_ID', 'ACTIVE', 'GLOBAL_ACTIVE',
-					'SORT', 'NAME', 'CODE', 'PICTURE', 'LEFT_MARGIN', 'RIGHT_MARGIN',
-					'DEPTH_LEVEL', 'DESCRIPTION', 'DESCRIPTION_TYPE', 'XML_ID', 'UF_*'
-				],
+				'select' => $select,
 			])->fetch();
 		}
 
