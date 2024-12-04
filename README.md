@@ -17,7 +17,7 @@
   ],
   "extra": {
     "installer-paths": {
-      "components/{$name}/": ["type:bitrix-d7-component"]
+      "components/local/{$name}/": ["type:bitrix-d7-component"]
     }
   }
 }
