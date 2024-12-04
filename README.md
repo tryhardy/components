@@ -7,12 +7,12 @@
 ```json
 {
   "require": {
-    "tryhardy/iblock.items": "dev-master"
+    "tryhardy/components": "dev-master"
   },
   "repositories": [
     {
       "type": "git",
-      "url": "https://github.com/tryhardy/iblock.items"
+      "url": "https://github.com/tryhardy/components"
     }
   ],
   "extra": {
