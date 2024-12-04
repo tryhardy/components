@@ -72,7 +72,12 @@ class SimpleCatalogSmartFilterComponent extends \CBitrixComponent
 			//Проверяем, все ли модули подключены
 	        $this->checkRequiredModules();
 	        $this->getResult();
-	        $this->includeComponentTemplate();
+			if (!$this->readDataFromCache()) {
+				//$this->setResultCacheKeys([]);
+				$this->includeComponentTemplate();
+				$this->EndResultCache();
+			}
+
             return $this->arResult;
         }
 		catch (Exception $e) {
@@ -310,24 +315,6 @@ class SimpleCatalogSmartFilterComponent extends \CBitrixComponent
 		return $GLOBALS[$filterName] ?: [];
 	}
 
-	protected function getSortedValues()
-	{
-		$args = func_get_args();
-		$data = array_shift($args);
-		foreach ($args as $n => $field) {
-			if (is_string($field)) {
-				$tmp = array();
-				foreach ($data as $key => $row) {
-					$tmp[$key] = $row[$field];
-				}
-				$args[$n] = $tmp;
-			}
-		}
-		$args[] = &$data;
-		call_user_func_array('array_multisort', $args);
-		return array_pop($args);
-	}
-
 	protected function getDefaultValues(array $arProperties = [])
 	{
 		if (empty($arProperties)) return $arProperties;
@@ -555,7 +542,7 @@ class SimpleCatalogSmartFilterComponent extends \CBitrixComponent
 		return $props;
     }
 
-	protected function getPropertyEnums(array $props = [])
+	protected function getPropertyEnums(array $props = []) : array
 	{
 		if (!$props) return $props;
 
@@ -595,7 +582,7 @@ class SimpleCatalogSmartFilterComponent extends \CBitrixComponent
 		return $props;
 	}
 
-	protected function getPropertiesString(array $props = [])
+	protected function getPropertiesString(array $props = []) : array
 	{
 		if (!$props) return $props;
 
@@ -917,5 +904,35 @@ class SimpleCatalogSmartFilterComponent extends \CBitrixComponent
 		}
 
 		return $props;
+	}
+
+	/**
+	 * определяет читать данные из кэша или нет
+	 * @return bool
+	 */
+	protected function readDataFromCache() : bool
+	{
+		$user = $GLOBALS["USER"];
+		$params = $this->arParams;
+
+		//Кэшировать при установленном фильтре
+		if ($params["CACHE_FILTER"] == "Y") {
+			$request = Application::getInstance()->getContext()->getRequest();
+			$systemParameters = $request->getSystemParameters();
+			$requestValues = $request->getValues();
+
+			//Исключаем из фильтра пустые значения и системные параметры
+			foreach($requestValues as $key => $value) {
+				if (!$value) unset($requestValues[$key]);
+				if (in_array($key, $systemParameters)) unset($requestValues[$key]);
+			}
+			$this->cacheAddon[] = $requestValues;
+		}
+
+		if ($params["CACHE_GROUPS"] == "Y" && is_object($user)) {
+			$this->cacheAddon[] = $user->GetUserGroupArray();
+		}
+
+		return !($this->StartResultCache($params["CACHE_TIME"], $this->cacheAddon));
 	}
 }

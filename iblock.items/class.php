@@ -300,11 +300,12 @@ class SimpleIblockItemsComponent extends \CBitrixComponent
 		return [$sort, $runtime];
 	}
 
-    /**
-     * Формирует объект фильтра для выборки по элементам
-     * @param array $params
-     * @return array
-     */
+	/**
+	 * Формирует объект фильтра для выборки по элементам
+	 * @param int $sectionId
+	 * @param array $section
+	 * @return array
+	 */
 	protected function onPrepareFilter(int $sectionId = 0, array $section = []) : array
 	{
 		$params = $this->arParams;

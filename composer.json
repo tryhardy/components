@@ -1,7 +1,7 @@
 {
-  "name": "tryhardy/iblock.items" ,
-  "description": "Облегченный компонент списка элементов",
-  "homepage": "https://github.com/tryhardy/iblock.items",
+  "name": "tryhardy/components" ,
+  "description": "Облегченный компонент списка элементов и фильтра",
+  "homepage": "https://github.com/tryhardy/components",
   "type": "bitrix-d7-component",
   "minimum-stability": "dev",
   "license": "MIT",
